@@ -1,7 +1,7 @@
 import { getIdToken } from './firebase';
 
-// Always use localhost for backend, even if frontend is accessed via network IP
-const API_BASE = 'http://localhost:4000';
+// Use environment variable for API base URL
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 
 async function request(path: string, options: RequestInit = {}) {
   const token = await getIdToken();
