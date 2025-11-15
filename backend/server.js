@@ -14,13 +14,20 @@ const admin = require('firebase-admin');
 // Use environment variable for Firebase credentials (for Render/production)
 // or fall back to local service account file (for local development)
 let serviceAccount;
+
+console.log('🔍 Checking Firebase credentials...');
+console.log('Environment variable FIREBASE_SERVICE_ACCOUNT_JSON exists:', !!process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+console.log('Environment variable length:', process.env.FIREBASE_SERVICE_ACCOUNT_JSON ? process.env.FIREBASE_SERVICE_ACCOUNT_JSON.length : 0);
+
 if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   // Production: Use service account from environment variable
   try {
     serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
     console.log('✅ Using Firebase service account from environment variable');
+    console.log('Project ID:', serviceAccount.project_id);
   } catch (error) {
     console.error('❌ Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON:', error.message);
+    console.error('First 100 chars:', process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.substring(0, 100));
     process.exit(1);
   }
 } else {
@@ -29,7 +36,9 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
     serviceAccount = require('./iiitnr-attendence-app-f604e-firebase-adminsdk-fbsvc-e79f0f1be5.json');
     console.log('✅ Using Firebase service account from local file');
   } catch (error) {
-    console.error('❌ Firebase service account not found. Please set FIREBASE_SERVICE_ACCOUNT_JSON environment variable or add the JSON file.');
+    console.error('❌ Firebase service account not found.');
+    console.error('Please set FIREBASE_SERVICE_ACCOUNT_JSON environment variable in Render dashboard.');
+    console.error('Or add the iiitnr-attendence-app-f604e-firebase-adminsdk-fbsvc-e79f0f1be5.json file locally.');
     process.exit(1);
   }
 }
