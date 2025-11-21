@@ -66,7 +66,8 @@ app.use(cors({
     'http://localhost:5173',
     'http://localhost:3000',
     'https://iiitnrattendence.netlify.app',
-    'https://iiitnrattendence.vercel.app'
+    'https://iiitnrattendence.vercel.app',
+    'https://rahull-prog.github.io'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -107,7 +108,7 @@ function cleanObject(obj) {
 function generateQRPayload(sessionId, courseId, facultyId, location, expiresIn = 300000) {
   const timestamp = Date.now();
   const expiresAt = timestamp + expiresIn; // Default 5 minutes
-  
+
   return {
     sessionId,
     courseId,
@@ -128,7 +129,7 @@ function verifyQRSignature(payload) {
 // Middleware to verify Firebase Auth token
 async function verifyToken(req, res, next) {
   const token = req.headers.authorization?.split('Bearer ')[1];
-  
+
   if (!token) {
     return res.status(401).json({ error: 'No token provided' });
   }
@@ -192,7 +193,7 @@ app.post('/api/student/profile', verifyToken, async (req, res) => {
     });
 
     await db.collection('students').doc(userId).set(studentData, { merge: true });
-    
+
     res.json({ success: true, student: studentData });
   } catch (error) {
     console.error('Error creating student profile:', error);
@@ -204,23 +205,23 @@ app.post('/api/student/profile', verifyToken, async (req, res) => {
 app.get('/api/student/dashboard', verifyToken, async (req, res) => {
   try {
     const userId = req.user.uid;
-    
+
     // Get student data
     const studentDoc = await db.collection('students').doc(userId).get();
     if (!studentDoc.exists) {
       return res.status(404).json({ error: 'Student profile not found' });
     }
-    
+
     const student = studentDoc.data();
-    
+
     // Get enrolled courses
     const enrollmentsSnapshot = await db.collection('enrollments')
       .where('studentId', '==', userId)
       .where('isActive', '==', true)
       .get();
-    
+
     const courseIds = enrollmentsSnapshot.docs.map(doc => doc.data().courseId);
-    
+
     // Get courses details
     const courses = [];
     for (const courseId of courseIds) {
@@ -229,30 +230,30 @@ app.get('/api/student/dashboard', verifyToken, async (req, res) => {
         courses.push({ id: courseDoc.id, ...courseDoc.data() });
       }
     }
-    
+
     // Get today's sessions
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    
+
     const sessionsSnapshot = await db.collection('sessions')
       .where('courseId', 'in', courseIds.length > 0 ? courseIds : ['dummy'])
       .where('date', '>=', admin.firestore.Timestamp.fromDate(today))
       .where('date', '<', admin.firestore.Timestamp.fromDate(tomorrow))
       .get();
-    
+
     const sessions = sessionsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    
+
     // Get attendance stats
     const attendanceSnapshot = await db.collection('attendance')
       .where('studentId', '==', userId)
       .get();
-    
+
     const totalClasses = attendanceSnapshot.size;
     const presentCount = attendanceSnapshot.docs.filter(doc => doc.data().status === 'present').length;
     const attendancePercentage = totalClasses > 0 ? (presentCount / totalClasses) * 100 : 0;
-    
+
     res.json({
       student,
       courses,
@@ -341,7 +342,7 @@ app.post('/api/student/scan-qr', verifyToken, async (req, res) => {
       locationVerified = distanceFromClass <= maxDistance;
 
       if (!locationVerified) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: `You are too far from class location (${Math.round(distanceFromClass)}m away, max ${maxDistance}m allowed)`,
           distance: Math.round(distanceFromClass),
           maxDistance
@@ -402,21 +403,21 @@ app.get('/api/student/attendance-history', verifyToken, async (req, res) => {
     const { courseId } = req.query;
 
     let query = db.collection('attendance').where('studentId', '==', userId);
-    
+
     if (courseId) {
       query = query.where('courseId', '==', courseId);
     }
 
     const snapshot = await query.orderBy('markedAt', 'desc').get();
-    
+
     const attendanceRecords = [];
     for (const doc of snapshot.docs) {
       const data = doc.data();
-      
+
       // Get session details
       const sessionDoc = await db.collection('sessions').doc(data.sessionId).get();
       const session = sessionDoc.exists ? sessionDoc.data() : {};
-      
+
       attendanceRecords.push({
         id: doc.id,
         ...data,
@@ -432,6 +433,182 @@ app.get('/api/student/attendance-history', verifyToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch attendance history' });
   }
 });
+
+// Join Course via Join Code
+app.post('/api/student/join-course', verifyToken, async (req, res) => {
+  try {
+    const { joinCode } = req.body;
+    const userId = req.user.uid;
+
+    if (!joinCode) {
+      return res.status(400).json({ error: 'Join code is required' });
+    }
+
+    // Find course by join code
+    const coursesSnapshot = await db.collection('courses')
+      .where('joinCode', '==', joinCode.toUpperCase())
+      .limit(1)
+      .get();
+
+    if (coursesSnapshot.empty) {
+      return res.status(404).json({ error: 'Invalid join code' });
+    }
+
+    const courseDoc = coursesSnapshot.docs[0];
+    const courseId = courseDoc.id;
+    const course = courseDoc.data();
+
+    // Check if already enrolled
+    const existingEnrollment = await db.collection('enrollments')
+      .where('studentId', '==', userId)
+      .where('courseId', '==', courseId)
+      .limit(1)
+      .get();
+
+    if (!existingEnrollment.empty) {
+      return res.status(400).json({ error: 'Already enrolled in this course' });
+    }
+
+    // Create enrollment
+    const enrollmentData = {
+      studentId: userId,
+      courseId,
+      isActive: true,
+      enrolledAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    await db.collection('enrollments').add(enrollmentData);
+
+    // Update enrolled count
+    await db.collection('courses').doc(courseId).update({
+      enrolledCount: admin.firestore.FieldValue.increment(1)
+    });
+
+    res.json({
+      success: true,
+      message: 'Successfully joined course',
+      course: { id: courseId, ...course }
+    });
+  } catch (error) {
+    console.error('Error joining course:', error);
+    res.status(500).json({ error: 'Failed to join course' });
+  }
+});
+
+// Get Student's Enrolled Courses
+app.get('/api/student/courses', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+
+    // Get enrollments
+    const enrollmentsSnapshot = await db.collection('enrollments')
+      .where('studentId', '==', userId)
+      .where('isActive', '==', true)
+      .get();
+
+    const courses = [];
+    for (const enrollDoc of enrollmentsSnapshot.docs) {
+      const enrollment = enrollDoc.data();
+      const courseDoc = await db.collection('courses').doc(enrollment.courseId).get();
+
+      if (courseDoc.exists) {
+        const courseData = courseDoc.data();
+
+        // Get faculty name
+        let facultyName = 'Unknown';
+        if (courseData.facultyId) {
+          const facultyDoc = await db.collection('faculty').doc(courseData.facultyId).get();
+          if (facultyDoc.exists) {
+            facultyName = facultyDoc.data().name || 'Unknown';
+          }
+        }
+
+        courses.push({
+          id: courseDoc.id,
+          ...courseData,
+          facultyName,
+          enrolledDate: enrollment.enrolledAt
+        });
+      }
+    }
+
+    res.json({ success: true, courses });
+  } catch (error) {
+    console.error('Error fetching courses:', error);
+    res.status(500).json({ error: 'Failed to fetch courses' });
+  }
+});
+
+// Get Student Timetable (aggregated from all courses)
+app.get('/api/student/timetable', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+
+    // Get enrolled courses
+    const enrollmentsSnapshot = await db.collection('enrollments')
+      .where('studentId', '==', userId)
+      .where('isActive', '==', true)
+      .get();
+
+    const timetable = {
+      Monday: [],
+      Tuesday: [],
+      Wednesday: [],
+      Thursday: [],
+      Friday: [],
+      Saturday: []
+    };
+
+    for (const enrollDoc of enrollmentsSnapshot.docs) {
+      const enrollment = enrollDoc.data();
+      const courseDoc = await db.collection('courses').doc(enrollment.courseId).get();
+
+      if (courseDoc.exists) {
+        const course = courseDoc.data();
+
+        // Get faculty name
+        let facultyName = 'Unknown';
+        if (course.facultyId) {
+          const facultyDoc = await db.collection('faculty').doc(course.facultyId).get();
+          if (facultyDoc.exists) {
+            facultyName = facultyDoc.data().name || 'Unknown';
+          }
+        }
+
+        // Add timetable slots
+        if (Array.isArray(course.timetable)) {
+          course.timetable.forEach(slot => {
+            if (timetable[slot.day]) {
+              timetable[slot.day].push({
+                time: slot.time,
+                courseCode: course.code,
+                courseName: course.name,
+                type: slot.type,
+                room: slot.room,
+                facultyName
+              });
+            }
+          });
+        }
+      }
+    }
+
+    // Sort each day's slots by time
+    Object.keys(timetable).forEach(day => {
+      timetable[day].sort((a, b) => {
+        const timeA = a.time.split(' - ')[0];
+        const timeB = b.time.split(' - ')[0];
+        return timeA.localeCompare(timeB);
+      });
+    });
+
+    res.json({ success: true, timetable });
+  } catch (error) {
+    console.error('Error fetching timetable:', error);
+    res.status(500).json({ error: 'Failed to fetch timetable' });
+  }
+});
+
 
 // ============================================
 // FACULTY ROUTES
@@ -464,7 +641,7 @@ app.post('/api/faculty/profile', verifyToken, async (req, res) => {
     });
 
     await db.collection('faculty').doc(userId).set(facultyData, { merge: true });
-    
+
     res.json({ success: true, faculty: facultyData });
   } catch (error) {
     console.error('Error creating faculty profile:', error);
@@ -497,7 +674,7 @@ app.post('/api/faculty/courses', verifyToken, async (req, res) => {
     });
 
     const courseRef = await db.collection('courses').add(courseData);
-    
+
     res.json({ success: true, courseId: courseRef.id, course: { id: courseRef.id, ...courseData } });
   } catch (error) {
     console.error('Error creating course:', error);
@@ -602,7 +779,7 @@ app.delete('/api/faculty/courses/:courseId', verifyToken, async (req, res) => {
 
     // Check if course exists and belongs to faculty
     const courseDoc = await db.collection('courses').doc(courseId).get();
-    
+
     if (!courseDoc.exists) {
       return res.status(404).json({ error: 'Course not found' });
     }
@@ -619,7 +796,7 @@ app.delete('/api/faculty/courses/:courseId', verifyToken, async (req, res) => {
     const enrollmentsSnapshot = await db.collection('enrollments')
       .where('courseId', '==', courseId)
       .get();
-    
+
     const batch = db.batch();
     enrollmentsSnapshot.docs.forEach(doc => {
       batch.delete(doc.ref);
@@ -677,7 +854,7 @@ app.post('/api/faculty/enroll-student', verifyToken, async (req, res) => {
     };
 
     await db.collection('enrollments').add(enrollmentData);
-    
+
     res.json({ success: true, message: 'Student enrolled successfully' });
   } catch (error) {
     console.error('Error enrolling student:', error);
@@ -790,11 +967,11 @@ app.get('/api/faculty/session/:sessionId/attendance', verifyToken, async (req, r
     const attendees = [];
     for (const doc of attendanceSnapshot.docs) {
       const data = doc.data();
-      
+
       // Get student details
       const studentDoc = await db.collection('students').doc(data.studentId).get();
       const student = studentDoc.exists ? studentDoc.data() : {};
-      
+
       attendees.push({
         id: doc.id,
         studentId: data.studentId,
